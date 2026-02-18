@@ -336,6 +336,68 @@ class PyreflyTypeChecker(TypeChecker):
             _, lineno, _, error_msg = line.split(":", maxsplit=3)
             line_to_errors.setdefault(int(lineno), []).append(error_msg.strip())
         return line_to_errors
+    
+
+class TyTypeChecker(TypeChecker):
+    @property
+    def name(self) -> str:
+        return "ty"
+
+    def install(self) -> bool:
+        try:
+            # Uninstall any existing version if present.
+            run(
+                [sys.executable, "-m", "pip", "uninstall", "ty", "-y"],
+                check=True,
+            )
+
+            # Install the latest version.
+            run(
+                [sys.executable, "-m", "pip", "install", "ty"],
+                check=True,
+            )
+
+            # Force the Python wrapper to install node if needed and download the latest version of ty.
+            self.get_version()
+            return True
+        except CalledProcessError:
+            print("Unable to install ty")
+            return False
+
+    def get_version(self) -> str:
+        proc = run([sys.executable, "-m", "ty", "--version"], stdout=PIPE, text=True)
+        version = proc.stdout.strip()
+
+        # Remove the " (hash YYYY-mm-dd)" if it's present.
+        version = version.split(" (")[0]
+        return version
+    
+    def run_tests(self, test_files: Sequence[str]) -> dict[str, str]:
+        command = [sys.executable, "-m", "ty", "check", ".", "--no-progress", "--output-format", "concise"]
+        proc = run(command, stdout=PIPE, text=True, encoding="utf-8")
+        lines = proc.stdout.split("\n")
+
+        # Add results to a dictionary keyed by the file name.
+        results_dict: dict[str, str] = {}
+        for line in lines:
+            file_name = line.split(":")[0].strip()
+            results_dict[file_name] = results_dict.get(file_name, "") + line + "\n"
+
+        return results_dict
+    
+    def parse_errors(self, output: Sequence[str]) -> dict[int, list[str]]:
+        line_to_errors: dict[int, list[str]] = {}
+        for line in output:
+            # Ignore indented notes and summary lines
+            if not line or line[0].isspace() or re.match(r"Found \d+ diagnostics", line) is not None:
+                continue
+            assert line.count(":") >= 3, f"Failed to parse line: {line!r}"
+            _, lineno, _, error_msg = line.split(":", maxsplit=3)
+            kind = error_msg.split("[")[0].strip()
+            if kind not in ("error", "warning"):
+                continue
+            line_to_errors.setdefault(int(lineno), []).append(line)
+        return line_to_errors
 
 
 TYPE_CHECKERS: Sequence[TypeChecker] = (
@@ -343,4 +405,5 @@ TYPE_CHECKERS: Sequence[TypeChecker] = (
     PyrightTypeChecker(),
     ZubanLSTypeChecker(),
     PyreflyTypeChecker(),
+    TyTypeChecker(),
 )
